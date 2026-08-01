@@ -1,0 +1,160 @@
+{
+  "app_name": "LotusERP",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "An enterprise-grade hybrid of Apple's elegance and Notion's clarity, focused on extreme legibility, high trust, and effortless retail management.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#111111",
+    "surfaceSecondary": "#F5F5F7",
+    "onSurfaceSecondary": "#1C1C1E",
+    "surfaceTertiary": "#E5E5EA",
+    "onSurfaceTertiary": "#48484A",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#274A3D",
+    "brandPrimary": "#274A3D",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E9F0EC",
+    "onBrandSecondary": "#274A3D",
+    "brandTertiary": "#F1F5F3",
+    "onBrandTertiary": "#274A3D",
+    "success": "#34C759",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9500",
+    "onWarning": "#FFFFFF",
+    "error": "#FF3B30",
+    "onError": "#FFFFFF",
+    "info": "#8E8E93",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5EA",
+    "borderStrong": "#C7C7CC",
+    "divider": "#E5E5EA"
+  },
+  "typography": {
+    "displayFontFamily": "Geist",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use Apple-native inset-grouped spacing. 16px horizontal margins for lists, 12px gap in grids. No tight clustering.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Bottom tab bar background",
+      "Sticky headers when scrolled",
+      "Sticky bottom CTA bar in the Billing screen",
+      "Floating Action Button background (blur over surface)"
+    ],
+    "dont's": [
+      "Data cards",
+      "List items",
+      "Form inputs"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Dashboard",
+      "purpose": "A premium overview of today's business metrics, cash flow, and quick actions.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "N/A for dashboard",
+        "error": "Failed to load dashboard data + Retry CTA"
+      },
+      "layout": "Apple-style large title header. A hero card for 'Today's Sales' using brandPrimary background or gradient. A 2-column grid for KPIs (Profit, Expenses, Cash, Inv Value). A horizontally scrolling section for Quick Actions (Add Bill, Add Expense). A recent activity Apple-style inset list at the bottom."
+    },
+    {
+      "name": "Inventory",
+      "purpose": "Manage product catalog, check stock levels, and organize categories.",
+      "states": {
+        "loading": "Skeleton list",
+        "empty": "Illustration of empty shelves + 'Add your first product' CTA",
+        "error": "Failed to load inventory + Retry CTA"
+      },
+      "layout": "Sticky header with a search bar and category pills (scrollable horizontally). An inset-grouped list of products showing a thumbnail (use product_placeholder image), Title, SKU, Price (INR), and a Stock pill (red if low). FAB to 'Add Product'."
+    },
+    {
+      "name": "Parties",
+      "purpose": "Manage Customers and Suppliers ledgers, view outstandings, and quick-call/WhatsApp them.",
+      "states": {
+        "loading": "Skeleton list",
+        "empty": "Illustration of an empty address book + 'Add new party' CTA",
+        "error": "Failed to load parties + Retry CTA"
+      },
+      "layout": "Top segmented control (Customers | Suppliers). Apple-style inset list of parties. Each row shows Name, Contact, and Outstanding Balance in green/red. Right accessory is a quick WhatsApp/Call icon button."
+    },
+    {
+      "name": "Billing (POS)",
+      "purpose": "Quick, highly efficient GST invoice generation with a sticky checkout bar.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "Start a new bill state",
+        "error": "Failed to process bill + Retry CTA"
+      },
+      "layout": "Form layout with inset grouped sections. Section 1: Customer Selection (dropdown/search). Section 2: Line Items (swipe-to-delete rows). Big 'Add Item' button. Sticky bottom container (glassmorphism) showing Total Amount, Tax breakdown, and a primary 'Generate Invoice' button."
+    }
+  ],
+  "images": {
+    "hero_bg": {
+      "url": "https://images.unsplash.com/photo-1606744888344-493238951221?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTN8MHwxfHNlYXJjaHwxfHxwcmVtaXVtJTIwc29mYSUyMGhvbWUlMjBkZWNvcnxlbnwwfHx8fDE3ODU1OTgzMDN8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1606744888344-493238951221?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTN8MHwxfHNlYXJjaHwxfHxwcmVtaXVtJTIwc29mYSUyMGhvbWUlMjBkZWNvcnxlbnwwfHx8fDE3ODU1OTgzMDN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Premium green and brown sofa chair"
+    },
+    "product_placeholder": {
+      "url": "https://images.unsplash.com/photo-1599280611965-bef72efc48fb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwxfHxjdXJ0YWluJTIwZmFicmljJTIwdGV4dHVyZXxlbnwwfHx8fDE3ODU1OTgzMDN8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1599280611965-bef72efc48fb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwxfHxjdXJ0YWluJTIwZmFicmljJTIwdGV4dHVyZXxlbnwwfHx8fDE3ODU1OTgzMDN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "White and gray curtain fabric texture"
+    },
+    "empty_state_bg": {
+      "url": "https://images.unsplash.com/photo-1599696848652-f0ff23bc911f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTN8MHwxfHNlYXJjaHwyfHxwcmVtaXVtJTIwc29mYSUyMGhvbWUlMjBkZWNvcnxlbnwwfHx8fDE3ODU1OTgzMDN8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1599696848652-f0ff23bc911f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTN8MHwxfHNlYXJjaHwyfHxwcmVtaXVtJTIwc29mYSUyMGhvbWUlMjBkZWNvcnxlbnwwfHx8fDE3ODU1OTgzMDN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Premium brown couch room detail"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Follow the '1 iOS-Native Clean' personality strictly. The UI should resemble native Apple apps (like Settings or Health) mixed with Notion's clarity.",
+    "Typography rule: Max font weight is 500. Never use bold, semibold, or black. Create hierarchy purely through font size and color (primary vs secondary text).",
+    "Use inset-grouped lists for data rows (like Inventory items, Ledger parties, Billing line items). Use surfaceSecondary as the background for these cards with an md radius.",
+    "NEVER use blue, purple, or indigo. The brand accent is a deep moss green (#274A3D) to signify wealth and physical retail goods. Fallback to dark grey/near-black for primary buttons if needed.",
+    "For the Dashboard, group KPIs in a 2-column grid. Ensure numeric values use the Indian numbering system (e.g., INR 1,50,000) and are highly legible.",
+    "Implement a persistent FAB over the bottom tabs for 'Quick Add'. It should open an Action Sheet (or bottom sheet) with options: New Invoice, New Product, New Expense.",
+    "For the POS/Billing screen, implement a sticky bottom container using glassmorphism. This container must house the 'Total Amount' and the primary 'Generate Invoice' button, remaining visible above the keyboard and safe area.",
+    "All text overlays on background images (e.g., hero cards or empty states) MUST use a top-to-bottom linear gradient scrim (transparent to ≥70% surfaceInverse) to guarantee WCAG AA readability.",
+    "Use Phosphor icons. Stick to regular weight, max size 24px for standard UI elements.",
+    "Do not use generic Material Design shadows. Shadow tier 1 means only very subtle elevation on floating elements (FAB, Modals). Standard cards should rely on border or surfaceSecondary background for distinction."
+  ]
+}
