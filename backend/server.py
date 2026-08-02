@@ -1,75 +1,574 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
-from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
 import uuid
-from datetime import datetime
-
+import jwt
+from pathlib import Path
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional, Literal
+from datetime import datetime, timedelta, timezone
+from passlib.context import CryptContext
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+JWT_SECRET = os.environ.get('JWT_SECRET', 'lotus-erp-dev-secret-change-me')
+JWT_ALG = 'HS256'
+TOKEN_MINUTES = 60 * 24 * 7  # 7 days
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+pwd_ctx = CryptContext(schemes=['bcrypt'], deprecated='auto')
+oauth2 = OAuth2PasswordBearer(tokenUrl='/api/auth/login')
 
+app = FastAPI(title='LotusERP')
+api = APIRouter(prefix='/api')
 
-# Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+# ----------------- Models -----------------
+Role = Literal['Owner', 'Manager', 'Accountant', 'Sales', 'Warehouse']
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str
+    business_name: Optional[str] = None
+    role: Role = 'Owner'
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = 'bearer'
+    user: dict
+
+class ProductIn(BaseModel):
+    name: str
+    sku: Optional[str] = None
+    category: Optional[str] = 'General'
+    brand: Optional[str] = None
+    hsn: Optional[str] = None
+    unit: Optional[str] = 'pcs'
+    purchase_price: float = 0
+    selling_price: float = 0
+    gst_rate: float = 5
+    stock: float = 0
+    low_stock_alert: float = 5
+    image_base64: Optional[str] = None
+    color: Optional[str] = None
+    material: Optional[str] = None
+    warehouse: Optional[str] = 'Main'
+
+class CustomerIn(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    gstin: Optional[str] = None
+    address: Optional[str] = None
+    party_type: Literal['customer', 'supplier'] = 'customer'
+    opening_balance: float = 0
+
+class InvoiceItem(BaseModel):
+    product_id: str
+    name: str
+    quantity: float
+    price: float
+    gst_rate: float = 5
+    discount: float = 0
+
+class InvoiceIn(BaseModel):
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = 'Walk-in'
+    items: List[InvoiceItem]
+    payment_method: Literal['Cash', 'UPI', 'Card', 'Bank', 'Credit'] = 'Cash'
+    amount_paid: float = 0
+    notes: Optional[str] = None
+    kind: Literal['sale', 'purchase'] = 'sale'
+
+class ExpenseIn(BaseModel):
+    category: str
+    amount: float
+    date: Optional[str] = None
+    notes: Optional[str] = None
+    payment_method: Literal['Cash', 'UPI', 'Card', 'Bank'] = 'Cash'
+
+# ----------------- Auth Helpers -----------------
+def hash_pw(p: str) -> str:
+    return pwd_ctx.hash(p)
+
+def verify_pw(p: str, h: str) -> bool:
+    try:
+        return pwd_ctx.verify(p, h)
+    except Exception:
+        return False
+
+def make_token(user: dict) -> str:
+    payload = {
+        'sub': user['id'],
+        'email': user['email'],
+        'role': user.get('role', 'Owner'),
+        'exp': datetime.now(timezone.utc) + timedelta(minutes=TOKEN_MINUTES),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+async def get_current_user(token: str = Depends(oauth2)):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        uid = payload.get('sub')
+        if not uid:
+            raise ValueError()
+    except Exception:
+        raise HTTPException(status_code=401, detail='Invalid token')
+    user = await db.users.find_one({'id': uid}, {'_id': 0, 'password_hash': 0})
+    if not user:
+        raise HTTPException(status_code=401, detail='User not found')
+    return user
+
+def clean(doc):
+    if doc is None:
+        return None
+    doc.pop('_id', None)
+    return doc
+
+# ----------------- Auth Routes -----------------
+@api.post('/auth/register', response_model=Token)
+async def register(payload: RegisterIn):
+    existing = await db.users.find_one({'email': payload.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail='Email already registered')
+    user = {
+        'id': str(uuid.uuid4()),
+        'email': payload.email.lower(),
+        'name': payload.name,
+        'business_name': payload.business_name or 'My Business',
+        'role': payload.role,
+        'password_hash': hash_pw(payload.password),
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(user)
+    safe = {k: v for k, v in user.items() if k not in ('_id', 'password_hash')}
+    return {'access_token': make_token(safe), 'token_type': 'bearer', 'user': safe}
+
+@api.post('/auth/login', response_model=Token)
+async def login(payload: LoginIn):
+    user = await db.users.find_one({'email': payload.email.lower()})
+    if not user or not verify_pw(payload.password, user.get('password_hash', '')):
+        raise HTTPException(status_code=401, detail='Invalid credentials')
+    safe = {k: v for k, v in user.items() if k not in ('_id', 'password_hash')}
+    return {'access_token': make_token(safe), 'token_type': 'bearer', 'user': safe}
+
+@api.get('/auth/me')
+async def me(user=Depends(get_current_user)):
+    return user
+
+# ----------------- Products -----------------
+@api.get('/products')
+async def list_products(q: Optional[str] = None, category: Optional[str] = None, user=Depends(get_current_user)):
+    query = {}
+    if q:
+        query['$or'] = [{'name': {'$regex': q, '$options': 'i'}}, {'sku': {'$regex': q, '$options': 'i'}}]
+    if category and category != 'All':
+        query['category'] = category
+    cursor = db.products.find(query, {'_id': 0}).sort('name', 1)
+    return await cursor.to_list(500)
+
+@api.get('/products/categories')
+async def product_categories(user=Depends(get_current_user)):
+    cats = await db.products.distinct('category')
+    return sorted([c for c in cats if c]) or ['General']
+
+@api.post('/products')
+async def create_product(payload: ProductIn, user=Depends(get_current_user)):
+    doc = payload.dict()
+    doc['id'] = str(uuid.uuid4())
+    if not doc.get('sku'):
+        doc['sku'] = 'SKU-' + doc['id'][:6].upper()
+    doc['created_at'] = datetime.now(timezone.utc).isoformat()
+    await db.products.insert_one(doc)
+    return clean(doc)
+
+@api.put('/products/{pid}')
+async def update_product(pid: str, payload: ProductIn, user=Depends(get_current_user)):
+    res = await db.products.find_one_and_update({'id': pid}, {'$set': payload.dict()})
+    if not res:
+        raise HTTPException(404, 'Not found')
+    doc = await db.products.find_one({'id': pid}, {'_id': 0})
+    return doc
+
+@api.delete('/products/{pid}')
+async def delete_product(pid: str, user=Depends(get_current_user)):
+    await db.products.delete_one({'id': pid})
+    return {'ok': True}
+
+# ----------------- Parties (Customers/Suppliers) -----------------
+@api.get('/parties')
+async def list_parties(party_type: Optional[str] = None, q: Optional[str] = None, user=Depends(get_current_user)):
+    query = {}
+    if party_type:
+        query['party_type'] = party_type
+    if q:
+        query['$or'] = [{'name': {'$regex': q, '$options': 'i'}}, {'phone': {'$regex': q, '$options': 'i'}}]
+    cursor = db.parties.find(query, {'_id': 0}).sort('name', 1)
+    parties = await cursor.to_list(500)
+    # compute outstanding = opening_balance + sum(unpaid invoices)
+    for p in parties:
+        agg = await db.invoices.aggregate([
+            {'$match': {'customer_id': p['id']}},
+            {'$group': {'_id': None, 'total': {'$sum': '$total'}, 'paid': {'$sum': '$amount_paid'}}}
+        ]).to_list(1)
+        due = 0
+        if agg:
+            due = (agg[0].get('total', 0) or 0) - (agg[0].get('paid', 0) or 0)
+        p['outstanding'] = round((p.get('opening_balance', 0) or 0) + due, 2)
+    return parties
+
+@api.post('/parties')
+async def create_party(payload: CustomerIn, user=Depends(get_current_user)):
+    doc = payload.dict()
+    doc['id'] = str(uuid.uuid4())
+    doc['created_at'] = datetime.now(timezone.utc).isoformat()
+    await db.parties.insert_one(doc)
+    return clean(doc)
+
+@api.put('/parties/{pid}')
+async def update_party(pid: str, payload: CustomerIn, user=Depends(get_current_user)):
+    await db.parties.find_one_and_update({'id': pid}, {'$set': payload.dict()})
+    doc = await db.parties.find_one({'id': pid}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Not found')
+    return doc
+
+@api.delete('/parties/{pid}')
+async def delete_party(pid: str, user=Depends(get_current_user)):
+    await db.parties.delete_one({'id': pid})
+    return {'ok': True}
+
+# ----------------- Invoices -----------------
+def compute_invoice_totals(items: List[dict]):
+    subtotal = 0
+    tax = 0
+    for it in items:
+        line = (it['price'] * it['quantity']) - (it.get('discount', 0) or 0)
+        subtotal += line
+        tax += line * (it.get('gst_rate', 0) or 0) / 100.0
+    total = subtotal + tax
+    return round(subtotal, 2), round(tax, 2), round(total, 2)
+
+async def next_invoice_number(kind: str) -> str:
+    prefix = 'INV' if kind == 'sale' else 'PUR'
+    count = await db.invoices.count_documents({'kind': kind})
+    return f"{prefix}-{(count + 1):05d}"
+
+@api.post('/invoices')
+async def create_invoice(payload: InvoiceIn, user=Depends(get_current_user)):
+    items = [i.dict() for i in payload.items]
+    if not items:
+        raise HTTPException(400, 'No items')
+    subtotal, tax, total = compute_invoice_totals(items)
+    inv = {
+        'id': str(uuid.uuid4()),
+        'invoice_number': await next_invoice_number(payload.kind),
+        'kind': payload.kind,
+        'customer_id': payload.customer_id,
+        'customer_name': payload.customer_name or 'Walk-in',
+        'items': items,
+        'subtotal': subtotal,
+        'tax': tax,
+        'total': total,
+        'amount_paid': payload.amount_paid,
+        'balance_due': round(total - payload.amount_paid, 2),
+        'payment_method': payload.payment_method,
+        'notes': payload.notes,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'created_by': user['id'],
+    }
+    await db.invoices.insert_one(inv)
+    # update stock
+    stock_delta = -1 if payload.kind == 'sale' else 1
+    for it in items:
+        await db.products.update_one({'id': it['product_id']}, {'$inc': {'stock': stock_delta * it['quantity']}})
+    return clean(inv)
+
+@api.get('/invoices')
+async def list_invoices(kind: Optional[str] = None, limit: int = 100, user=Depends(get_current_user)):
+    q = {}
+    if kind:
+        q['kind'] = kind
+    cursor = db.invoices.find(q, {'_id': 0}).sort('created_at', -1).limit(limit)
+    return await cursor.to_list(limit)
+
+@api.get('/invoices/{iid}')
+async def get_invoice(iid: str, user=Depends(get_current_user)):
+    doc = await db.invoices.find_one({'id': iid}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Not found')
+    return doc
+
+# ----------------- Expenses -----------------
+@api.get('/expenses')
+async def list_expenses(user=Depends(get_current_user)):
+    cursor = db.expenses.find({}, {'_id': 0}).sort('created_at', -1).limit(200)
+    return await cursor.to_list(200)
+
+@api.post('/expenses')
+async def create_expense(payload: ExpenseIn, user=Depends(get_current_user)):
+    doc = payload.dict()
+    doc['id'] = str(uuid.uuid4())
+    doc['created_at'] = datetime.now(timezone.utc).isoformat()
+    if not doc.get('date'):
+        doc['date'] = doc['created_at'][:10]
+    await db.expenses.insert_one(doc)
+    return clean(doc)
+
+@api.delete('/expenses/{eid}')
+async def delete_expense(eid: str, user=Depends(get_current_user)):
+    await db.expenses.delete_one({'id': eid})
+    return {'ok': True}
+
+# ----------------- Dashboard & Reports -----------------
+@api.get('/dashboard')
+async def dashboard(user=Depends(get_current_user)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    month_prefix = today[:7]
+
+    # Sales today
+    sales_today_cur = db.invoices.find({'kind': 'sale', 'created_at': {'$gte': today}}, {'_id': 0})
+    sales_today = await sales_today_cur.to_list(1000)
+    today_sales = sum(s.get('total', 0) for s in sales_today)
+
+    # Month sales
+    month_sales_cur = db.invoices.find({'kind': 'sale', 'created_at': {'$regex': f'^{month_prefix}'}}, {'_id': 0})
+    month_sales = await month_sales_cur.to_list(5000)
+    monthly_sales = sum(s.get('total', 0) for s in month_sales)
+
+    # Month purchase
+    month_purchase_cur = db.invoices.find({'kind': 'purchase', 'created_at': {'$regex': f'^{month_prefix}'}}, {'_id': 0})
+    month_purchase = await month_purchase_cur.to_list(5000)
+    monthly_purchase = sum(p.get('total', 0) for p in month_purchase)
+
+    # Expenses today & month
+    exp_today_cur = db.expenses.find({'created_at': {'$gte': today}}, {'_id': 0})
+    exp_today = await exp_today_cur.to_list(500)
+    today_expense = sum(e.get('amount', 0) for e in exp_today)
+
+    month_exp_cur = db.expenses.find({'created_at': {'$regex': f'^{month_prefix}'}}, {'_id': 0})
+    month_exp = await month_exp_cur.to_list(5000)
+    monthly_expense = sum(e.get('amount', 0) for e in month_exp)
+
+    # Inventory value & low stock
+    products = await db.products.find({}, {'_id': 0}).to_list(5000)
+    inventory_value = sum((p.get('purchase_price', 0) or 0) * (p.get('stock', 0) or 0) for p in products)
+    low_stock = [p for p in products if (p.get('stock', 0) or 0) <= (p.get('low_stock_alert', 0) or 0)]
+
+    # Pending receivables
+    all_sale_inv = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
+    pending_receivable = sum(i.get('balance_due', 0) for i in all_sale_inv)
+
+    # Today profit rough (sales - expense - purchase cost of items today)
+    today_profit = today_sales - today_expense
+
+    # Top products (this month by qty sold)
+    top_products = {}
+    for s in month_sales:
+        for it in s.get('items', []):
+            key = it.get('name', 'Unknown')
+            top_products[key] = top_products.get(key, 0) + it.get('quantity', 0)
+    top_products_list = sorted(
+        [{'name': k, 'qty': v} for k, v in top_products.items()],
+        key=lambda x: x['qty'], reverse=True
+    )[:5]
+
+    # 7-day sales trend
+    from collections import OrderedDict
+    trend = OrderedDict()
+    now = datetime.now(timezone.utc).date()
+    for i in range(6, -1, -1):
+        d = (now - timedelta(days=i)).isoformat()
+        trend[d] = 0
+    recent_cur = db.invoices.find(
+        {'kind': 'sale', 'created_at': {'$gte': (now - timedelta(days=6)).isoformat()}},
+        {'_id': 0, 'created_at': 1, 'total': 1}
+    )
+    recent = await recent_cur.to_list(5000)
+    for s in recent:
+        d = s.get('created_at', '')[:10]
+        if d in trend:
+            trend[d] += s.get('total', 0)
+
+    recent_invoices = await db.invoices.find({}, {'_id': 0}).sort('created_at', -1).limit(5).to_list(5)
+
+    # Business health score (simple heuristic 0-100)
+    score = 60
+    if monthly_sales > 0:
+        score += 15
+    if monthly_sales > monthly_expense + monthly_purchase:
+        score += 15
+    if len(low_stock) == 0:
+        score += 10
+    score = min(100, score)
+
+    return {
+        'today_sales': round(today_sales, 2),
+        'today_expense': round(today_expense, 2),
+        'today_profit': round(today_profit, 2),
+        'monthly_sales': round(monthly_sales, 2),
+        'monthly_purchase': round(monthly_purchase, 2),
+        'monthly_expense': round(monthly_expense, 2),
+        'monthly_profit': round(monthly_sales - monthly_expense - monthly_purchase, 2),
+        'inventory_value': round(inventory_value, 2),
+        'low_stock_count': len(low_stock),
+        'pending_receivable': round(pending_receivable, 2),
+        'total_products': len(products),
+        'top_products': top_products_list,
+        'sales_trend': [{'date': k, 'amount': round(v, 2)} for k, v in trend.items()],
+        'recent_invoices': recent_invoices,
+        'business_health': score,
+    }
+
+@api.get('/reports/gst')
+async def gst_report(user=Depends(get_current_user)):
+    invoices = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
+    rate_summary = {}
+    total_taxable = 0
+    total_tax = 0
+    for inv in invoices:
+        for it in inv.get('items', []):
+            rate = it.get('gst_rate', 0)
+            line = (it['price'] * it['quantity']) - (it.get('discount', 0) or 0)
+            tax = line * rate / 100
+            key = f'{rate}%'
+            if key not in rate_summary:
+                rate_summary[key] = {'rate': rate, 'taxable': 0, 'cgst': 0, 'sgst': 0, 'total_tax': 0}
+            rate_summary[key]['taxable'] += line
+            rate_summary[key]['cgst'] += tax / 2
+            rate_summary[key]['sgst'] += tax / 2
+            rate_summary[key]['total_tax'] += tax
+            total_taxable += line
+            total_tax += tax
+    for k in rate_summary:
+        for f in ['taxable', 'cgst', 'sgst', 'total_tax']:
+            rate_summary[k][f] = round(rate_summary[k][f], 2)
+    return {
+        'summary': list(rate_summary.values()),
+        'total_taxable': round(total_taxable, 2),
+        'total_tax': round(total_tax, 2),
+        'invoice_count': len(invoices),
+    }
+
+@api.get('/reports/sales-register')
+async def sales_register(user=Depends(get_current_user)):
+    invoices = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).sort('created_at', -1).to_list(2000)
+    return invoices
+
+@api.get('/reports/pnl')
+async def pnl_report(user=Depends(get_current_user)):
+    sales = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
+    purchases = await db.invoices.find({'kind': 'purchase'}, {'_id': 0}).to_list(10000)
+    expenses = await db.expenses.find({}, {'_id': 0}).to_list(10000)
+
+    total_sales = sum(s.get('total', 0) for s in sales)
+    total_purchases = sum(p.get('total', 0) for p in purchases)
+    total_expenses = sum(e.get('amount', 0) for e in expenses)
+
+    exp_by_cat = {}
+    for e in expenses:
+        cat = e.get('category', 'Other')
+        exp_by_cat[cat] = exp_by_cat.get(cat, 0) + e.get('amount', 0)
+
+    return {
+        'total_sales': round(total_sales, 2),
+        'total_purchases': round(total_purchases, 2),
+        'total_expenses': round(total_expenses, 2),
+        'gross_profit': round(total_sales - total_purchases, 2),
+        'net_profit': round(total_sales - total_purchases - total_expenses, 2),
+        'expenses_by_category': [{'category': k, 'amount': round(v, 2)} for k, v in sorted(exp_by_cat.items(), key=lambda x: -x[1])],
+    }
+
+# ----------------- Seed -----------------
+@api.post('/seed')
+async def seed_data():
+    """Seed demo data. Idempotent-ish: creates admin if not present."""
+    admin_email = 'admin@lotuserp.com'
+    existing = await db.users.find_one({'email': admin_email})
+    if not existing:
+        admin = {
+            'id': str(uuid.uuid4()),
+            'email': admin_email,
+            'name': 'Admin',
+            'business_name': 'LotusERP Demo Store',
+            'role': 'Owner',
+            'password_hash': hash_pw('admin123'),
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        }
+        await db.users.insert_one(admin)
+
+    if await db.products.count_documents({}) == 0:
+        demo_products = [
+            {'name': 'Royal King Mattress 6x6', 'category': 'Mattress', 'purchase_price': 8500, 'selling_price': 14999, 'gst_rate': 18, 'stock': 12, 'unit': 'pcs', 'hsn': '9404', 'brand': 'DreamRest', 'color': 'Ivory'},
+            {'name': 'Silk Curtain Fabric', 'category': 'Curtain', 'purchase_price': 220, 'selling_price': 450, 'gst_rate': 5, 'stock': 340, 'unit': 'mtr', 'hsn': '5407', 'brand': 'LuxeDrape', 'color': 'Beige'},
+            {'name': 'Velvet Sofa Fabric', 'category': 'Sofa Fabric', 'purchase_price': 380, 'selling_price': 799, 'gst_rate': 5, 'stock': 180, 'unit': 'mtr', 'hsn': '5801', 'brand': 'PlushHome', 'color': 'Emerald'},
+            {'name': 'Persian Carpet 5x7', 'category': 'Carpet', 'purchase_price': 4200, 'selling_price': 8999, 'gst_rate': 12, 'stock': 8, 'unit': 'pcs', 'hsn': '5701', 'brand': 'HeritageWeaves', 'color': 'Maroon'},
+            {'name': 'Designer Cushion Cover Set', 'category': 'Cushions', 'purchase_price': 180, 'selling_price': 499, 'gst_rate': 12, 'stock': 45, 'unit': 'set', 'hsn': '6304', 'brand': 'CasaCraft', 'color': 'Multi'},
+            {'name': 'Premium Cotton Bedsheet Set', 'category': 'Bedsheets', 'purchase_price': 550, 'selling_price': 1299, 'gst_rate': 5, 'stock': 22, 'unit': 'set', 'hsn': '6302', 'brand': 'SoftNest', 'color': 'White'},
+            {'name': 'Textured Wallpaper Roll', 'category': 'Wallpaper', 'purchase_price': 850, 'selling_price': 1799, 'gst_rate': 12, 'stock': 3, 'unit': 'roll', 'hsn': '4814', 'brand': 'WallArt', 'color': 'Grey'},
+            {'name': 'Orthopedic Memory Foam Pillow', 'category': 'Pillows', 'purchase_price': 320, 'selling_price': 799, 'gst_rate': 12, 'stock': 60, 'unit': 'pcs', 'hsn': '9404', 'brand': 'DreamRest', 'color': 'White'},
+        ]
+        for p in demo_products:
+            p['id'] = str(uuid.uuid4())
+            p['sku'] = 'SKU-' + p['id'][:6].upper()
+            p['warehouse'] = 'Main'
+            p['low_stock_alert'] = 5
+            p['image_base64'] = None
+            p['created_at'] = datetime.now(timezone.utc).isoformat()
+        await db.products.insert_many(demo_products)
+
+    if await db.parties.count_documents({}) == 0:
+        demo_parties = [
+            {'name': 'Rakesh Sharma', 'phone': '9876543210', 'party_type': 'customer', 'opening_balance': 0, 'address': 'Pune, MH', 'gstin': None},
+            {'name': 'Meera Interiors', 'phone': '9820098200', 'party_type': 'customer', 'opening_balance': 4500, 'address': 'Mumbai, MH', 'gstin': '27ABCDE1234F1Z5'},
+            {'name': 'Sunrise Homes Ltd', 'phone': '9911223344', 'party_type': 'customer', 'opening_balance': 0, 'address': 'Bengaluru, KA', 'gstin': '29XYZAB1234G1Z9'},
+            {'name': 'FabricWorld Suppliers', 'phone': '9800011122', 'party_type': 'supplier', 'opening_balance': 12000, 'address': 'Surat, GJ', 'gstin': '24SUPPLR1234H1Z1'},
+            {'name': 'DreamRest Manufacturing', 'phone': '9800022233', 'party_type': 'supplier', 'opening_balance': 0, 'address': 'Delhi', 'gstin': '07DREAM1234I1Z2'},
+        ]
+        for p in demo_parties:
+            p['id'] = str(uuid.uuid4())
+            p['created_at'] = datetime.now(timezone.utc).isoformat()
+        await db.parties.insert_many(demo_parties)
+
+    return {'ok': True, 'admin_email': admin_email}
+
+@api.get('/')
 async def root():
-    return {"message": "Hello World"}
+    return {'app': 'LotusERP', 'status': 'ok'}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
-
-# Include the router in the main app
-app.include_router(api_router)
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=['*'],
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@app.on_event("shutdown")
+@app.on_event('startup')
+async def on_startup():
+    await db.users.create_index('email', unique=True)
+    await db.products.create_index('id', unique=True)
+    await db.parties.create_index('id', unique=True)
+    await db.invoices.create_index('id', unique=True)
+    await db.expenses.create_index('id', unique=True)
+
+@app.on_event('shutdown')
 async def shutdown_db_client():
     client.close()
