@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@/src/api/client';
 import { theme } from '@/src/theme/theme';
+import { BarcodeScannerModal } from '@/src/components/BarcodeScannerModal';
 
 const CATEGORIES = ['Mattress', 'Curtain', 'Sofa Fabric', 'Wallpaper', 'Carpet', 'Bedsheets', 'Cushions', 'Pillows', 'Home Decor', 'Accessories', 'General'];
 const UNITS = ['pcs', 'mtr', 'set', 'roll', 'kg', 'box'];
@@ -23,6 +24,8 @@ export default function NewProduct() {
   const [gstRate, setGstRate] = useState(5);
   const [stock, setStock] = useState('');
   const [color, setColor] = useState('');
+  const [barcode, setBarcode] = useState('');
+  const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +40,7 @@ export default function NewProduct() {
           name, sku: sku || undefined, category, brand: brand || undefined, hsn: hsn || undefined,
           unit, purchase_price: parseFloat(purchasePrice || '0'), selling_price: parseFloat(sellingPrice),
           gst_rate: gstRate, stock: parseFloat(stock || '0'), color: color || undefined,
+          barcode: barcode || undefined,
         }),
       });
       router.back();
@@ -72,12 +76,23 @@ export default function NewProduct() {
           <ChipRow label="GST Rate %" value={String(gstRate)} options={GST_RATES.map(String)} onChange={(v) => setGstRate(parseFloat(v))} tid="np-gst" />
           <Field label="Opening Stock" value={stock} onChangeText={setStock} keyboardType="numeric" tid="np-stock" />
 
+          <View style={{ gap: 6 }}>
+            <Text style={styles.label}>Barcode / QR</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput testID="np-barcode" style={[styles.input, { flex: 1 }]} value={barcode} onChangeText={setBarcode} placeholder="Scan or type" placeholderTextColor={theme.color.muted} />
+              <Pressable style={styles.scanBtn} onPress={() => setScanning(true)} testID="np-scan-btn">
+                <Ionicons name="qr-code-outline" size={20} color={theme.color.brand} />
+              </Pressable>
+            </View>
+          </View>
+
           {error ? <Text style={styles.error} testID="np-error">{error}</Text> : null}
           <Pressable style={styles.primaryBtn} onPress={save} disabled={saving} testID="save-product-btn">
             {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.primaryBtnText}>Save Product</Text>}
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
+      <BarcodeScannerModal visible={scanning} onClose={() => setScanning(false)} onScan={(code) => { setBarcode(code); setScanning(false); }} />
     </SafeAreaView>
   );
 }
@@ -117,6 +132,7 @@ const styles = StyleSheet.create({
   chipSelected: { backgroundColor: theme.color.brand },
   chipText: { fontSize: 13, color: theme.color.onSurfaceSecondary },
   chipTextSelected: { color: '#FFF', fontWeight: '500' },
+  scanBtn: { width: 48, height: Platform.OS === 'ios' ? 46 : 40, borderRadius: 12, backgroundColor: theme.color.brandTertiary, alignItems: 'center', justifyContent: 'center' },
   primaryBtn: { backgroundColor: theme.color.brand, paddingVertical: 15, borderRadius: 14, alignItems: 'center', marginTop: 8 },
   primaryBtnText: { color: '#FFF', fontWeight: '500', fontSize: 15 },
   error: { color: theme.color.error, fontSize: 13 },

@@ -1,24 +1,37 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "LotusERP",
+    "slug": "lotus-erp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "lotuserp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.homesync.shtoey"
+      "bundleIdentifier": "com.emergent.homesync.shtoey",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan product barcodes and delivery proof photos",
+        "NSPhotoLibraryUsageDescription": "Attach product and delivery proof photos",
+        "NSLocationWhenInUseUsageDescription": "Capture delivery location on confirmation",
+        "NSMicrophoneUsageDescription": "Voice notes on orders"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#274A3D"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.homesync.shtoey"
+      "package": "com.emergent.homesync.shtoey",
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -33,7 +46,25 @@
           "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#274A3D"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow LotusERP to use the camera for barcode scanning and delivery proof."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow LotusERP to capture delivery location."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow LotusERP to access photos for delivery proof."
         }
       ]
     ],

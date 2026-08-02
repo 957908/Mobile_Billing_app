@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { api } from '@/src/api/client';
 import { theme, inr } from '@/src/theme/theme';
+import { BarcodeScannerModal } from '@/src/components/BarcodeScannerModal';
 
 type Line = { product_id: string; name: string; quantity: number; price: number; gst_rate: number; discount: number };
 type Party = { id: string; name: string };
@@ -22,6 +23,7 @@ export default function Billing() {
   const [products, setProducts] = useState<any[]>([]);
   const [showProduct, setShowProduct] = useState(false);
   const [showCustomer, setShowCustomer] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const [productQuery, setProductQuery] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
@@ -53,6 +55,19 @@ export default function Billing() {
     });
     setShowProduct(false);
     setProductQuery('');
+  };
+
+  const onScan = async (code: string) => {
+    setShowScanner(false);
+    try {
+      const p = await api<any>(`/products/by-barcode/${encodeURIComponent(code)}`);
+      addProduct(p);
+      setToast(`Added ${p.name}`);
+      setTimeout(() => setToast(null), 2000);
+    } catch {
+      setToast(`No product for code ${code}`);
+      setTimeout(() => setToast(null), 2500);
+    }
   };
 
   const updateQty = (id: string, qty: number) => {
@@ -113,7 +128,10 @@ export default function Billing() {
           <View style={styles.section}>
             <View style={styles.rowBetween}>
               <Text style={styles.sectionLabel}>Line Items · {items.length}</Text>
-              <Pressable onPress={() => setShowProduct(true)} testID="add-item-btn"><Text style={styles.linkText}>+ Add</Text></Pressable>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <Pressable onPress={() => setShowScanner(true)} testID="scan-item-btn"><Ionicons name="qr-code-outline" size={18} color={theme.color.brand} /></Pressable>
+                <Pressable onPress={() => setShowProduct(true)} testID="add-item-btn"><Text style={styles.linkText}>+ Add</Text></Pressable>
+              </View>
             </View>
             {items.length === 0 ? (
               <Text style={styles.mutedCenter}>Tap +Add to add products</Text>
@@ -233,6 +251,8 @@ export default function Billing() {
           </View>
         </View>
       </Modal>
+
+      <BarcodeScannerModal visible={showScanner} onClose={() => setShowScanner(false)} onScan={onScan} />
     </SafeAreaView>
   );
 }

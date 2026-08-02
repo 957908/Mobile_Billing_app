@@ -7,9 +7,14 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { useIconFonts } from '@/src/hooks/use-icon-fonts';
 import { AuthProvider } from '@/src/state/auth';
+import { I18nProvider } from '@/src/i18n';
+import { registerAutoSync } from '@/src/api/client';
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
+
+// Auto-replay offline queue when internet returns
+registerAutoSync();
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
@@ -25,9 +30,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#FFFFFF' } }} />
-        </AuthProvider>
+        <I18nProvider>
+          <AuthProvider>
+            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#FFFFFF' } }} />
+          </AuthProvider>
+        </I18nProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

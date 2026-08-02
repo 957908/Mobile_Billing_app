@@ -1,0 +1,47 @@
+{
+  "summary": "LotusERP v2 tested. Backend: 37/37 pytest tests PASS (24 v1 regression + 13 new v2). Found + fixed 1 critical backend bug: PUT /api/deliveries/{id}/status referenced `payload.status` instead of `payload.new_status` causing 500. New endpoints validated: /custom-orders (create+list+status flow Pending→In Production→Ready→Delivered, CO-XXXXX generation, total/balance calc), /manufacturing (BATCH-XXXXX, raw_cost/total_cost/per_unit_cost math, stock increment when product_id supplied), /rolls (ROLL-XXXXX, remaining_length computed, consume decrement + usage_history push, 400 on over-consume, DELETE), /deliveries (DEL-XXXXX with 4-digit numeric otp, status update, correct OTP → Delivered with photo_base64+lat+lng+delivered_at, wrong OTP → 400), /products/by-barcode/{code} lookup by barcode OR sku with 404 for unknown, /products optional barcode field. Frontend (Expo web preview @ 390x844): Login → Dashboard shows v2 quick-action tiles (qa-custom-orders/qa-manufacturing/qa-rolls/qa-delivery/qa-settings) + more-button; /more hub shows 7 tiles all navigating correctly; Custom Orders / Manufacturing / Rolls / Deliveries / Settings screens all load. Manufacturing add modal opens with mfg-save-btn. Delivery detail screen renders status timeline (Assigned/Out for Delivery/Delivered). Invoice detail INV-00003 renders Share PDF + WhatsApp buttons; share-pdf-btn click on web triggers print/share flow without crash. Product/new has np-barcode + np-scan-btn; Billing exposes scan-item-btn + add-item-btn. Settings Language toggle EN↔HI works and persists across reload (all labels switch to Hindi: सेटिंग्स, भाषा, लंबित सिंक, अभी सिंक करें, लॉग आउट). sync-now-btn clicks without crash, 0 operations queued displayed. Barcode Scanner on web: modal opens, requests camera permission first, then would show 'Scanner works on mobile devices' after grant (minor UX nit — on web platform we should skip permission step and show fallback directly). No red-screen errors, no deprecated packages (no expo-av / expo-barcode-scanner / expo-background-fetch). Only console noise: harmless 'props.pointerEvents is deprecated' RN-Web warning (pre-existing).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "BarcodeScannerModal (web)", "issues": ["On web platform, modal first prompts 'Camera permission needed' → 'Grant Permission' before showing the 'Scanner works on mobile devices' fallback. Should check Platform.OS==='web' first (before permission gate) so web users see the fallback immediately without an ineffective grant step. Reference: /app/frontend/src/components/BarcodeScannerModal.tsx:26-40."]}
+    ],
+    "react_native_issues": [
+      {"component": "props.pointerEvents warning", "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' emitted on Web (likely RN-Web / LinearGradient internal). Non-blocking. Pre-existing from iteration 1."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_lotus_erp.py",
+    "/app/backend/tests/test_lotus_erp_v2.py",
+    "/app/test_reports/pytest/pytest_v2_results.xml"
+  ],
+  "action_items": [
+    "(FIXED by T1) server.py PUT /api/deliveries/{id}/status: payload.status → payload.new_status. Verify no other similar attribute mismatches (grep for 'payload.status' returned no more hits).",
+    "Minor UX: In BarcodeScannerModal, move the `Platform.OS === 'web'` branch above the `permission?.granted` check so web users skip the meaningless 'Grant Permission' step.",
+    "Optional: add role-based auth guards (currently every authenticated user is treated as Owner for all endpoints).",
+    "Optional: PUT/DELETE for custom-orders + manufacturing not exposed — add if edit/cancel is required from UI later."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to 846 lines with new v2 endpoints. Consider splitting into routers/{auth,products,invoices,custom_orders,manufacturing,rolls,deliveries}.py.",
+    "PUT /api/deliveries/{id}/status previously used wrong attribute (payload.status) — indicates the endpoint had no test coverage before v2. Test coverage now added.",
+    "make_otp uses random.randint (not cryptographically secure). OK for delivery OTP but document.",
+    "No stock decrement/validation for custom orders when linked to inventory; only Manufacturing increments stock. Consider linking custom-order → inventory when items reference products.",
+    "consume_roll allows consumption equal to remaining but returns misleading '400: Only X meters remaining' error message when length > remaining — message OK, but consider clarifying (e.g. 'Requested Y > Remaining X').",
+    "GET /api/rolls recomputes remaining_length in-memory rather than storing — fine for now."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed payload.status → payload.new_status in PUT /deliveries/{id}/status)",
+    "/app/backend/tests/test_lotus_erp_v2.py (new — 13 tests for v2 endpoints)",
+    "/app/test_reports/iteration_2.json (new)"
+  ],
+  "success_rate": {"backend": "100% (37/37 after fix)", "frontend": "100% (all v2 flows navigable & buttons wired)"},
+  "seed_data_creation": "POST /api/seed idempotent. Tests created TEST_-prefixed custom orders (CO-00001), manufacturing batch (BATCH-00001), fabric roll (created+deleted), deliveries (DEL-00001, DEL-00002 with TEST_DEL_Cust), a test barcode product (created+deleted), and TEST_UI_Delivery via UI. Non-destructive; production seed intact.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests split across /app/backend/tests/test_lotus_erp.py (v1) and /app/backend/tests/test_lotus_erp_v2.py (v2). Run: `pytest backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_v2_results.xml`. All routes require Bearer JWT except /api/, /api/auth/*, /api/seed. New testIDs in v2: qa-custom-orders/manufacturing/rolls/delivery/settings on dashboard; more-button + more-{custom-orders|manufacturing|rolls|deliveries|expenses|reports|settings} on /more; add-co-btn / co-pick-customer / co-add-item / co-save-btn / co-item-add-btn on custom-order/new; co-detail-screen on custom-order/[id]; mfg-add-btn/mfg-save-btn/mfg-add-raw/mfg-prod-none on manufacturing; roll-add-btn/roll-save-btn/roll-consume-save on rolls; del-add-btn/del-save-btn on deliveries; delivery-otp-input/del-photo-btn/confirm-delivery-btn/del-toast on delivery/[id]; share-pdf-btn/share-whatsapp-btn on invoice/[id]; np-barcode/np-scan-btn on product/new; scan-item-btn on billing; scan-barcode-btn on inventory; sync-now-btn / settings-logout-btn on settings. Note: OTP input & Confirm button on delivery detail only render when status ≠ Delivered — pick an Assigned/Out-for-Delivery delivery for OTP UI testing.",
+  "rca_of_issue": "Bug: PUT /api/deliveries/{did}/status returned 500. RCA: server.py line 786 referenced `payload.status` but the DeliveryStatusIn pydantic model defines the field as `new_status` (line 741). Access to non-existent attribute raised AttributeError → 500. Repro: `curl -X PUT $BASE/api/deliveries/{id}/status -H 'Authorization: Bearer …' -d '{\"new_status\":\"Out for Delivery\"}'`. Fix: changed to `payload.new_status`. Verified via test_lotus_erp_v2.py::TestDeliveries::test_delivery_flow_with_otp (now PASSES). Mitigation: add pydantic model attribute test in CI; keep the JSON body field name in sync with the model attribute in one place."
+}

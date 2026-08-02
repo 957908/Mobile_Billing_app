@@ -65,6 +65,7 @@ class ProductIn(BaseModel):
     color: Optional[str] = None
     material: Optional[str] = None
     warehouse: Optional[str] = 'Main'
+    barcode: Optional[str] = None
 
 class CustomerIn(BaseModel):
     name: str
@@ -543,6 +544,276 @@ async def seed_data():
         await db.parties.insert_many(demo_parties)
 
     return {'ok': True, 'admin_email': admin_email}
+
+# ----------------- Custom Orders -----------------
+class CustomOrderItem(BaseModel):
+    product_name: str
+    order_type: Literal['curtain_stitching', 'mattress_custom', 'sofa_cutting', 'other'] = 'other'
+    measurements: dict = {}  # freeform: width, height, length, thickness, quantity
+    price: float = 0
+    notes: Optional[str] = None
+
+class CustomOrderIn(BaseModel):
+    customer_id: Optional[str] = None
+    customer_name: str = 'Walk-in'
+    items: List[CustomOrderItem]
+    advance_paid: float = 0
+    expected_delivery: Optional[str] = None
+    notes: Optional[str] = None
+
+class CustomOrderStatusIn(BaseModel):
+    new_status: Literal['Pending', 'In Production', 'Ready', 'Delivered', 'Cancelled']
+
+@api.get('/custom-orders')
+async def list_custom_orders(status_filter: Optional[str] = None, user=Depends(get_current_user)):
+    q = {}
+    if status_filter:
+        q['status'] = status_filter
+    cursor = db.custom_orders.find(q, {'_id': 0}).sort('created_at', -1)
+    return await cursor.to_list(500)
+
+@api.post('/custom-orders')
+async def create_custom_order(payload: CustomOrderIn, user=Depends(get_current_user)):
+    total = sum((i.price or 0) for i in payload.items)
+    count = await db.custom_orders.count_documents({})
+    doc = {
+        'id': str(uuid.uuid4()),
+        'order_number': f'CO-{(count + 1):05d}',
+        'customer_id': payload.customer_id,
+        'customer_name': payload.customer_name,
+        'items': [i.dict() for i in payload.items],
+        'total': round(total, 2),
+        'advance_paid': payload.advance_paid,
+        'balance_due': round(total - payload.advance_paid, 2),
+        'expected_delivery': payload.expected_delivery,
+        'notes': payload.notes,
+        'status': 'Pending',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'created_by': user['id'],
+    }
+    await db.custom_orders.insert_one(doc)
+    return clean(doc)
+
+@api.get('/custom-orders/{cid}')
+async def get_custom_order(cid: str, user=Depends(get_current_user)):
+    doc = await db.custom_orders.find_one({'id': cid}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Not found')
+    return doc
+
+@api.put('/custom-orders/{cid}/status')
+async def update_custom_order_status(cid: str, payload: CustomOrderStatusIn, user=Depends(get_current_user)):
+    res = await db.custom_orders.find_one_and_update({'id': cid}, {'$set': {'status': payload.new_status}})
+    if not res:
+        raise HTTPException(404, 'Not found')
+    doc = await db.custom_orders.find_one({'id': cid}, {'_id': 0})
+    return doc
+
+# ----------------- Manufacturing -----------------
+class RawMaterial(BaseModel):
+    name: str
+    quantity: float
+    unit: str = 'pcs'
+    cost: float = 0
+
+class ManufacturingIn(BaseModel):
+    product_id: Optional[str] = None
+    product_name: str
+    batch_number: Optional[str] = None
+    quantity: float
+    raw_materials: List[RawMaterial] = []
+    labor_cost: float = 0
+    wastage: float = 0
+    notes: Optional[str] = None
+
+@api.get('/manufacturing')
+async def list_manufacturing(user=Depends(get_current_user)):
+    cursor = db.manufacturing.find({}, {'_id': 0}).sort('created_at', -1)
+    return await cursor.to_list(500)
+
+@api.post('/manufacturing')
+async def create_manufacturing(payload: ManufacturingIn, user=Depends(get_current_user)):
+    raw_cost = sum((r.cost or 0) for r in payload.raw_materials)
+    total_cost = raw_cost + (payload.labor_cost or 0)
+    per_unit = total_cost / payload.quantity if payload.quantity > 0 else 0
+    count = await db.manufacturing.count_documents({})
+    doc = {
+        'id': str(uuid.uuid4()),
+        'batch_number': payload.batch_number or f'BATCH-{(count + 1):05d}',
+        'product_id': payload.product_id,
+        'product_name': payload.product_name,
+        'quantity': payload.quantity,
+        'raw_materials': [r.dict() for r in payload.raw_materials],
+        'raw_cost': round(raw_cost, 2),
+        'labor_cost': payload.labor_cost or 0,
+        'wastage': payload.wastage or 0,
+        'total_cost': round(total_cost, 2),
+        'per_unit_cost': round(per_unit, 2),
+        'notes': payload.notes,
+        'status': 'Completed',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.manufacturing.insert_one(doc)
+    # increment product stock if product linked
+    if payload.product_id:
+        await db.products.update_one({'id': payload.product_id}, {'$inc': {'stock': payload.quantity}})
+    return clean(doc)
+
+# ----------------- Fabric Rolls -----------------
+class FabricRollIn(BaseModel):
+    name: str
+    color: Optional[str] = None
+    pattern: Optional[str] = None
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    purchase_date: Optional[str] = None
+    total_length: float
+    used_length: float = 0
+    cost_per_meter: float = 0
+    barcode: Optional[str] = None
+
+class RollUsageIn(BaseModel):
+    length: float
+    notes: Optional[str] = None
+
+@api.get('/rolls')
+async def list_rolls(user=Depends(get_current_user)):
+    cursor = db.fabric_rolls.find({}, {'_id': 0}).sort('created_at', -1)
+    rolls = await cursor.to_list(500)
+    for r in rolls:
+        r['remaining_length'] = round((r.get('total_length', 0) or 0) - (r.get('used_length', 0) or 0), 2)
+    return rolls
+
+@api.post('/rolls')
+async def create_roll(payload: FabricRollIn, user=Depends(get_current_user)):
+    count = await db.fabric_rolls.count_documents({})
+    doc = payload.dict()
+    doc['id'] = str(uuid.uuid4())
+    doc['roll_number'] = f'ROLL-{(count + 1):05d}'
+    doc['usage_history'] = []
+    doc['created_at'] = datetime.now(timezone.utc).isoformat()
+    if not doc.get('purchase_date'):
+        doc['purchase_date'] = doc['created_at'][:10]
+    await db.fabric_rolls.insert_one(doc)
+    doc['remaining_length'] = round(doc['total_length'] - doc.get('used_length', 0), 2)
+    return clean(doc)
+
+@api.post('/rolls/{rid}/consume')
+async def consume_roll(rid: str, payload: RollUsageIn, user=Depends(get_current_user)):
+    roll = await db.fabric_rolls.find_one({'id': rid})
+    if not roll:
+        raise HTTPException(404, 'Roll not found')
+    remaining = (roll.get('total_length', 0) or 0) - (roll.get('used_length', 0) or 0)
+    if payload.length > remaining:
+        raise HTTPException(400, f'Only {remaining} meters remaining')
+    entry = {
+        'length': payload.length,
+        'notes': payload.notes,
+        'used_at': datetime.now(timezone.utc).isoformat(),
+        'by': user['id'],
+    }
+    await db.fabric_rolls.update_one(
+        {'id': rid},
+        {'$inc': {'used_length': payload.length}, '$push': {'usage_history': entry}}
+    )
+    doc = await db.fabric_rolls.find_one({'id': rid}, {'_id': 0})
+    doc['remaining_length'] = round((doc.get('total_length', 0) or 0) - (doc.get('used_length', 0) or 0), 2)
+    return doc
+
+@api.delete('/rolls/{rid}')
+async def delete_roll(rid: str, user=Depends(get_current_user)):
+    await db.fabric_rolls.delete_one({'id': rid})
+    return {'ok': True}
+
+# ----------------- Deliveries -----------------
+class DeliveryIn(BaseModel):
+    invoice_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    customer_name: str
+    customer_phone: Optional[str] = None
+    address: Optional[str] = None
+    driver_name: Optional[str] = None
+    vehicle: Optional[str] = None
+    scheduled_date: Optional[str] = None
+    notes: Optional[str] = None
+
+class DeliveryStatusIn(BaseModel):
+    new_status: Literal['Assigned', 'Out for Delivery', 'Delivered', 'Failed', 'Cancelled']
+
+class DeliveryConfirmIn(BaseModel):
+    otp: str
+    photo_base64: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+def make_otp() -> str:
+    import random
+    return f'{random.randint(1000, 9999)}'
+
+@api.get('/deliveries')
+async def list_deliveries(status_filter: Optional[str] = None, user=Depends(get_current_user)):
+    q = {}
+    if status_filter:
+        q['status'] = status_filter
+    cursor = db.deliveries.find(q, {'_id': 0}).sort('created_at', -1)
+    return await cursor.to_list(500)
+
+@api.post('/deliveries')
+async def create_delivery(payload: DeliveryIn, user=Depends(get_current_user)):
+    count = await db.deliveries.count_documents({})
+    doc = payload.dict()
+    doc['id'] = str(uuid.uuid4())
+    doc['delivery_number'] = f'DEL-{(count + 1):05d}'
+    doc['otp'] = make_otp()
+    doc['status'] = 'Assigned'
+    doc['photo_base64'] = None
+    doc['delivered_at'] = None
+    doc['latitude'] = None
+    doc['longitude'] = None
+    doc['created_at'] = datetime.now(timezone.utc).isoformat()
+    await db.deliveries.insert_one(doc)
+    return clean(doc)
+
+@api.get('/deliveries/{did}')
+async def get_delivery(did: str, user=Depends(get_current_user)):
+    doc = await db.deliveries.find_one({'id': did}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Not found')
+    return doc
+
+@api.put('/deliveries/{did}/status')
+async def update_delivery_status(did: str, payload: DeliveryStatusIn, user=Depends(get_current_user)):
+    await db.deliveries.update_one({'id': did}, {'$set': {'status': payload.new_status}})
+    doc = await db.deliveries.find_one({'id': did}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Not found')
+    return doc
+
+@api.post('/deliveries/{did}/confirm')
+async def confirm_delivery(did: str, payload: DeliveryConfirmIn, user=Depends(get_current_user)):
+    doc = await db.deliveries.find_one({'id': did})
+    if not doc:
+        raise HTTPException(404, 'Not found')
+    if doc.get('otp') != payload.otp:
+        raise HTTPException(400, 'Invalid OTP')
+    updates = {
+        'status': 'Delivered',
+        'photo_base64': payload.photo_base64,
+        'latitude': payload.latitude,
+        'longitude': payload.longitude,
+        'delivered_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.deliveries.update_one({'id': did}, {'$set': updates})
+    updated = await db.deliveries.find_one({'id': did}, {'_id': 0})
+    return updated
+
+# ----------------- Barcode lookup -----------------
+@api.get('/products/by-barcode/{code}')
+async def product_by_barcode(code: str, user=Depends(get_current_user)):
+    doc = await db.products.find_one({'$or': [{'barcode': code}, {'sku': code}]}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Product not found for this code')
+    return doc
 
 @api.get('/')
 async def root():

@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { api } from '@/src/api/client';
 import { theme, inr } from '@/src/theme/theme';
+import { BarcodeScannerModal } from '@/src/components/BarcodeScannerModal';
 
 export default function Inventory() {
   const router = useRouter();
@@ -14,6 +15,8 @@ export default function Inventory() {
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [prods, cats] = await Promise.all([
@@ -28,15 +31,31 @@ export default function Inventory() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  const onScan = async (code: string) => {
+    setScanning(false);
+    try {
+      const p = await api<any>(`/products/by-barcode/${encodeURIComponent(code)}`);
+      router.push({ pathname: '/product/[id]', params: { id: p.id } });
+    } catch {
+      setToast(`No product found for code ${code}`);
+      setTimeout(() => setToast(null), 2500);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']} testID="inventory-screen">
       {/* Sticky header */}
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <Text style={styles.title}>Inventory</Text>
-          <Pressable style={styles.addBtn} onPress={() => router.push('/product/new')} testID="add-product-btn">
-            <Ionicons name="add" size={22} color="#FFF" />
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable style={styles.scanBtn} onPress={() => setScanning(true)} testID="scan-barcode-btn">
+              <Ionicons name="qr-code-outline" size={22} color={theme.color.brand} />
+            </Pressable>
+            <Pressable style={styles.addBtn} onPress={() => router.push('/product/new')} testID="add-product-btn">
+              <Ionicons name="add" size={22} color="#FFF" />
+            </Pressable>
+          </View>
         </View>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={18} color={theme.color.muted} />
@@ -93,6 +112,8 @@ export default function Inventory() {
           )}
         />
       )}
+      <BarcodeScannerModal visible={scanning} onClose={() => setScanning(false)} onScan={onScan} />
+      {toast ? <View style={styles.toast} testID="inventory-toast"><Text style={styles.toastText}>{toast}</Text></View> : null}
     </SafeAreaView>
   );
 }
@@ -104,6 +125,9 @@ const styles = StyleSheet.create<any>({
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   title: { fontSize: 26, fontWeight: '500', color: theme.color.onSurface, letterSpacing: -0.5 },
   addBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brand, alignItems: 'center', justifyContent: 'center' },
+  scanBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brandTertiary, alignItems: 'center', justifyContent: 'center' },
+  toast: { position: 'absolute', bottom: 80, alignSelf: 'center', backgroundColor: theme.color.surfaceInverse, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
+  toastText: { color: '#FFF', fontSize: 13 },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.color.surfaceSecondary, borderRadius: 12, paddingHorizontal: 12, gap: 8 },
   searchInput: { flex: 1, paddingVertical: 10, color: theme.color.onSurface, fontSize: 15 },
   chipsRow: { gap: 8, paddingRight: 8, paddingVertical: 12 },

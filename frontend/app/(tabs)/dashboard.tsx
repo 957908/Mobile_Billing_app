@@ -4,8 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { api } from '@/src/api/client';
+import NetInfo from '@react-native-community/netinfo';
+import { api, pendingSyncCount, replayQueue } from '@/src/api/client';
 import { useAuth } from '@/src/state/auth';
+import { useI18n } from '@/src/i18n';
 import { theme, inr } from '@/src/theme/theme';
 
 type Dash = {
@@ -21,9 +23,12 @@ type Dash = {
 export default function Dashboard() {
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const { t } = useI18n();
   const [data, setData] = useState<Dash | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [pending, setPending] = useState(0);
+  const [online, setOnline] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -32,9 +37,18 @@ export default function Dashboard() {
     } catch (e) {
       console.warn(e);
     }
+    setPending(await pendingSyncCount());
   }, []);
 
   useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+  useEffect(() => {
+    const sub = NetInfo.addEventListener((s) => {
+      setOnline(!!s.isConnected);
+      if (s.isConnected) replayQueue().then(() => pendingSyncCount().then(setPending));
+    });
+    NetInfo.fetch().then((s) => setOnline(!!s.isConnected));
+    return () => sub();
+  }, []);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
@@ -48,9 +62,24 @@ export default function Dashboard() {
         {/* Header */}
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.hello}>{`Hello, ${user?.name?.split(' ')[0] || 'there'}`}</Text>
+            <Text style={styles.hello}>{`${t('hello')}, ${user?.name?.split(' ')[0] || 'there'}`}</Text>
             <Text style={styles.business}>{user?.business_name || 'My Business'}</Text>
           </View>
+          {!online ? (
+            <View style={styles.offlineBadge} testID="offline-badge">
+              <Ionicons name="cloud-offline-outline" size={12} color={theme.color.warning} />
+              <Text style={styles.offlineText}>{t('offline')}</Text>
+            </View>
+          ) : null}
+          {pending > 0 ? (
+            <Pressable style={styles.pendingBadge} onPress={() => replayQueue().then(() => pendingSyncCount().then(setPending))} testID="pending-sync-badge">
+              <Ionicons name="sync" size={12} color="#FFF" />
+              <Text style={styles.pendingText}>{pending}</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.iconBtn} onPress={() => router.push('/more')} testID="more-button">
+            <Ionicons name="grid-outline" size={22} color={theme.color.onSurface} />
+          </Pressable>
           <Pressable style={styles.iconBtn} onPress={signOut} testID="logout-button">
             <Ionicons name="log-out-outline" size={22} color={theme.color.onSurface} />
           </Pressable>
@@ -58,7 +87,7 @@ export default function Dashboard() {
 
         {/* Hero card */}
         <LinearGradient colors={['#274A3D', '#1B3529']} style={styles.hero} testID="today-sales-card">
-          <Text style={styles.heroLabel}>Today's Sales</Text>
+          <Text style={styles.heroLabel}>{t('today_sales')}</Text>
           <Text style={styles.heroValue}>{inr(data?.today_sales)}</Text>
           <View style={styles.heroFooter}>
             <View>
@@ -89,13 +118,18 @@ export default function Dashboard() {
         </View>
 
         {/* Quick Actions */}
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <Text style={styles.sectionTitle}>{t('quick_actions')}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionsRow}>
-          <QuickAction icon="add-circle" label="New Bill" onPress={() => router.push('/(tabs)/billing')} testID="qa-new-bill" />
-          <QuickAction icon="cube" label="Add Product" onPress={() => router.push('/product/new')} testID="qa-add-product" />
-          <QuickAction icon="person-add" label="Add Party" onPress={() => router.push('/party/new')} testID="qa-add-party" />
-          <QuickAction icon="wallet" label="Add Expense" onPress={() => router.push('/expenses')} testID="qa-add-expense" />
-          <QuickAction icon="document-text" label="Reports" onPress={() => router.push('/reports')} testID="qa-reports" />
+          <QuickAction icon="add-circle" label={t('new_bill')} onPress={() => router.push('/(tabs)/billing')} testID="qa-new-bill" />
+          <QuickAction icon="cube" label={t('add_product')} onPress={() => router.push('/product/new')} testID="qa-add-product" />
+          <QuickAction icon="person-add" label={t('add_party')} onPress={() => router.push('/party/new')} testID="qa-add-party" />
+          <QuickAction icon="wallet" label={t('add_expense')} onPress={() => router.push('/expenses')} testID="qa-add-expense" />
+          <QuickAction icon="construct" label={t('custom_orders')} onPress={() => router.push('/custom-orders')} testID="qa-custom-orders" />
+          <QuickAction icon="hammer" label={t('manufacturing')} onPress={() => router.push('/manufacturing')} testID="qa-manufacturing" />
+          <QuickAction icon="reorder-four" label={t('rolls')} onPress={() => router.push('/rolls')} testID="qa-rolls" />
+          <QuickAction icon="bicycle" label={t('delivery')} onPress={() => router.push('/deliveries')} testID="qa-delivery" />
+          <QuickAction icon="document-text" label={t('reports')} onPress={() => router.push('/reports')} testID="qa-reports" />
+          <QuickAction icon="settings" label={t('settings')} onPress={() => router.push('/settings')} testID="qa-settings" />
         </ScrollView>
 
         {/* 7-day trend */}
@@ -192,7 +226,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
   hello: { fontSize: 22, color: theme.color.onSurface, fontWeight: '500' },
   business: { fontSize: 13, color: theme.color.muted, marginTop: 2 },
-  iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.color.surfaceSecondary },
+  iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.color.surfaceSecondary, marginLeft: 8 },
+  offlineBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: '#FFF3E0', marginRight: 6 },
+  offlineText: { fontSize: 11, color: theme.color.warning, fontWeight: '500' },
+  pendingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: theme.color.brand, marginRight: 6 },
+  pendingText: { fontSize: 11, color: '#FFF', fontWeight: '500' },
   hero: { marginHorizontal: 16, borderRadius: 20, padding: 20 },
   heroLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 13 },
   heroValue: { color: '#FFF', fontSize: 34, fontWeight: '500', marginTop: 4, letterSpacing: -0.5 },
