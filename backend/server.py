@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -132,6 +132,16 @@ async def get_current_user(token: str = Depends(oauth2)):
         raise HTTPException(status_code=401, detail='User not found')
     return user
 
+def require_roles(allowed_roles: List[Role]):
+    async def dependency(current_user: dict = Depends(get_current_user)):
+        if current_user.get('role') not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Required roles: {allowed_roles}"
+            )
+        return current_user
+    return dependency
+
 def clean(doc):
     if doc is None:
         return None
@@ -186,7 +196,7 @@ async def product_categories(user=Depends(get_current_user)):
     return sorted([c for c in cats if c]) or ['General']
 
 @api.post('/products')
-async def create_product(payload: ProductIn, user=Depends(get_current_user)):
+async def create_product(payload: ProductIn, user=Depends(require_roles(['Owner', 'Manager']))):
     doc = payload.dict()
     doc['id'] = str(uuid.uuid4())
     if not doc.get('sku'):
@@ -196,7 +206,7 @@ async def create_product(payload: ProductIn, user=Depends(get_current_user)):
     return clean(doc)
 
 @api.put('/products/{pid}')
-async def update_product(pid: str, payload: ProductIn, user=Depends(get_current_user)):
+async def update_product(pid: str, payload: ProductIn, user=Depends(require_roles(['Owner', 'Manager']))):
     res = await db.products.find_one_and_update({'id': pid}, {'$set': payload.dict()})
     if not res:
         raise HTTPException(404, 'Not found')
@@ -204,7 +214,7 @@ async def update_product(pid: str, payload: ProductIn, user=Depends(get_current_
     return doc
 
 @api.delete('/products/{pid}')
-async def delete_product(pid: str, user=Depends(get_current_user)):
+async def delete_product(pid: str, user=Depends(require_roles(['Owner', 'Manager']))):
     await db.products.delete_one({'id': pid})
     return {'ok': True}
 
@@ -231,7 +241,7 @@ async def list_parties(party_type: Optional[str] = None, q: Optional[str] = None
     return parties
 
 @api.post('/parties')
-async def create_party(payload: CustomerIn, user=Depends(get_current_user)):
+async def create_party(payload: CustomerIn, user=Depends(require_roles(['Owner', 'Manager', 'Accountant']))):
     doc = payload.dict()
     doc['id'] = str(uuid.uuid4())
     doc['created_at'] = datetime.now(timezone.utc).isoformat()
@@ -239,7 +249,7 @@ async def create_party(payload: CustomerIn, user=Depends(get_current_user)):
     return clean(doc)
 
 @api.put('/parties/{pid}')
-async def update_party(pid: str, payload: CustomerIn, user=Depends(get_current_user)):
+async def update_party(pid: str, payload: CustomerIn, user=Depends(require_roles(['Owner', 'Manager', 'Accountant']))):
     await db.parties.find_one_and_update({'id': pid}, {'$set': payload.dict()})
     doc = await db.parties.find_one({'id': pid}, {'_id': 0})
     if not doc:
@@ -247,7 +257,7 @@ async def update_party(pid: str, payload: CustomerIn, user=Depends(get_current_u
     return doc
 
 @api.delete('/parties/{pid}')
-async def delete_party(pid: str, user=Depends(get_current_user)):
+async def delete_party(pid: str, user=Depends(require_roles(['Owner', 'Manager']))):
     await db.parties.delete_one({'id': pid})
     return {'ok': True}
 
@@ -268,10 +278,20 @@ async def next_invoice_number(kind: str) -> str:
     return f"{prefix}-{(count + 1):05d}"
 
 @api.post('/invoices')
-async def create_invoice(payload: InvoiceIn, user=Depends(get_current_user)):
+async def create_invoice(payload: InvoiceIn, user=Depends(require_roles(['Owner', 'Manager', 'Sales', 'Accountant']))):
     items = [i.dict() for i in payload.items]
     if not items:
         raise HTTPException(400, 'No items')
+    
+    # Stock sufficiency check for sales
+    if payload.kind == 'sale':
+        for it in items:
+            p = await db.products.find_one({'id': it['product_id']})
+            if not p:
+                raise HTTPException(400, f"Product {it['name']} not found in inventory")
+            if p.get('stock', 0) < it['quantity']:
+                raise HTTPException(400, f"Insufficient stock for {it['name']}. Available: {p.get('stock', 0)}, Requested: {it['quantity']}")
+
     subtotal, tax, total = compute_invoice_totals(items)
     inv = {
         'id': str(uuid.uuid4()),
@@ -319,7 +339,7 @@ async def list_expenses(user=Depends(get_current_user)):
     return await cursor.to_list(200)
 
 @api.post('/expenses')
-async def create_expense(payload: ExpenseIn, user=Depends(get_current_user)):
+async def create_expense(payload: ExpenseIn, user=Depends(require_roles(['Owner', 'Manager', 'Accountant']))):
     doc = payload.dict()
     doc['id'] = str(uuid.uuid4())
     doc['created_at'] = datetime.now(timezone.utc).isoformat()
@@ -329,13 +349,13 @@ async def create_expense(payload: ExpenseIn, user=Depends(get_current_user)):
     return clean(doc)
 
 @api.delete('/expenses/{eid}')
-async def delete_expense(eid: str, user=Depends(get_current_user)):
+async def delete_expense(eid: str, user=Depends(require_roles(['Owner', 'Manager']))):
     await db.expenses.delete_one({'id': eid})
     return {'ok': True}
 
 # ----------------- Dashboard & Reports -----------------
 @api.get('/dashboard')
-async def dashboard(user=Depends(get_current_user)):
+async def dashboard(user=Depends(require_roles(['Owner', 'Manager', 'Accountant']))):
     today = datetime.now(timezone.utc).date().isoformat()
     month_prefix = today[:7]
 
@@ -434,7 +454,7 @@ async def dashboard(user=Depends(get_current_user)):
     }
 
 @api.get('/reports/gst')
-async def gst_report(user=Depends(get_current_user)):
+async def gst_report(user=Depends(require_roles(['Owner', 'Accountant']))):
     invoices = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
     rate_summary = {}
     total_taxable = 0
@@ -463,13 +483,96 @@ async def gst_report(user=Depends(get_current_user)):
         'invoice_count': len(invoices),
     }
 
+@api.get('/reports/gst/export')
+async def export_gst_report(user=Depends(require_roles(['Owner', 'Accountant']))):
+    import io
+    import csv
+    invoices = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
+    rate_summary = {}
+    total_taxable = 0
+    total_tax = 0
+    for inv in invoices:
+        for it in inv.get('items', []):
+            rate = it.get('gst_rate', 0)
+            line = (it['price'] * it['quantity']) - (it.get('discount', 0) or 0)
+            tax = line * rate / 100
+            key = f'{rate}%'
+            if key not in rate_summary:
+                rate_summary[key] = {'rate': rate, 'taxable': 0, 'cgst': 0, 'sgst': 0, 'total_tax': 0}
+            rate_summary[key]['taxable'] += line
+            rate_summary[key]['cgst'] += tax / 2
+            rate_summary[key]['sgst'] += tax / 2
+            rate_summary[key]['total_tax'] += tax
+            total_taxable += line
+            total_tax += tax
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['GST Rate', 'Taxable Value (INR)', 'CGST (INR)', 'SGST (INR)', 'Total GST Collected (INR)'])
+    for k in sorted(rate_summary.keys()):
+        r = rate_summary[k]
+        writer.writerow([
+            f"{r['rate']}%",
+            f"{r['taxable']:.2f}",
+            f"{r['cgst']:.2f}",
+            f"{r['sgst']:.2f}",
+            f"{r['total_tax']:.2f}"
+        ])
+    writer.writerow([
+        'Total',
+        f"{total_taxable:.2f}",
+        f"{(total_tax / 2):.2f}",
+        f"{(total_tax / 2):.2f}",
+        f"{total_tax:.2f}"
+    ])
+    
+    return Response(
+        content=output.getvalue(),
+        media_type='text/csv',
+        headers={
+            'Content-Disposition': 'attachment; filename=gst_report.csv',
+            'Access-Control-Expose-Headers': 'Content-Disposition'
+        }
+    )
+
 @api.get('/reports/sales-register')
-async def sales_register(user=Depends(get_current_user)):
+async def sales_register(user=Depends(require_roles(['Owner', 'Manager', 'Accountant']))):
     invoices = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).sort('created_at', -1).to_list(2000)
     return invoices
 
+@api.get('/reports/sales-register/export')
+async def export_sales_register(user=Depends(require_roles(['Owner', 'Manager', 'Accountant']))):
+    import io
+    import csv
+    invoices = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).sort('created_at', -1).to_list(10000)
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Invoice Number', 'Date', 'Customer Name', 'Subtotal (INR)', 'GST Collected (INR)', 'Total Amount (INR)', 'Payment Method', 'Balance Due (INR)'])
+    
+    for inv in invoices:
+        writer.writerow([
+            inv.get('invoice_number', ''),
+            inv.get('created_at', '')[:10],
+            inv.get('customer_name', 'Walk-in'),
+            f"{inv.get('subtotal', 0):.2f}",
+            f"{inv.get('tax', 0):.2f}",
+            f"{inv.get('total', 0):.2f}",
+            inv.get('payment_method', 'Cash'),
+            f"{inv.get('balance_due', 0):.2f}"
+        ])
+        
+    return Response(
+        content=output.getvalue(),
+        media_type='text/csv',
+        headers={
+            'Content-Disposition': 'attachment; filename=sales_register.csv',
+            'Access-Control-Expose-Headers': 'Content-Disposition'
+        }
+    )
+
 @api.get('/reports/pnl')
-async def pnl_report(user=Depends(get_current_user)):
+async def pnl_report(user=Depends(require_roles(['Owner', 'Accountant']))):
     sales = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
     purchases = await db.invoices.find({'kind': 'purchase'}, {'_id': 0}).to_list(10000)
     expenses = await db.expenses.find({}, {'_id': 0}).to_list(10000)
@@ -491,6 +594,48 @@ async def pnl_report(user=Depends(get_current_user)):
         'net_profit': round(total_sales - total_purchases - total_expenses, 2),
         'expenses_by_category': [{'category': k, 'amount': round(v, 2)} for k, v in sorted(exp_by_cat.items(), key=lambda x: -x[1])],
     }
+
+@api.get('/reports/pnl/export')
+async def export_pnl_report(user=Depends(require_roles(['Owner', 'Accountant']))):
+    import io
+    import csv
+    sales = await db.invoices.find({'kind': 'sale'}, {'_id': 0}).to_list(10000)
+    purchases = await db.invoices.find({'kind': 'purchase'}, {'_id': 0}).to_list(10000)
+    expenses = await db.expenses.find({}, {'_id': 0}).to_list(10000)
+
+    total_sales = sum(s.get('total', 0) for s in sales)
+    total_purchases = sum(p.get('total', 0) for p in purchases)
+    total_expenses = sum(e.get('amount', 0) for e in expenses)
+
+    exp_by_cat = {}
+    for e in expenses:
+        cat = e.get('category', 'Other')
+        exp_by_cat[cat] = exp_by_cat.get(cat, 0) + e.get('amount', 0)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Profit & Loss Statement'])
+    writer.writerow([])
+    writer.writerow(['Category', 'Type', 'Amount (INR)'])
+    writer.writerow(['Total Sales (Revenue)', 'Revenue', f"{total_sales:.2f}"])
+    writer.writerow(['Total Purchases (Cost of Sales)', 'Expense', f"{total_purchases:.2f}"])
+    writer.writerow(['Total Direct Expenses', 'Expense', f"{total_expenses:.2f}"])
+    writer.writerow(['Gross Profit', 'Profit', f"{(total_sales - total_purchases):.2f}"])
+    writer.writerow(['Net Profit', 'Profit', f"{(total_sales - total_purchases - total_expenses):.2f}"])
+    writer.writerow([])
+    writer.writerow(['Expenses Breakdown by Category'])
+    writer.writerow(['Category', 'Amount (INR)'])
+    for cat, amt in sorted(exp_by_cat.items(), key=lambda x: -x[1]):
+        writer.writerow([cat, f"{amt:.2f}"])
+
+    return Response(
+        content=output.getvalue(),
+        media_type='text/csv',
+        headers={
+            'Content-Disposition': 'attachment; filename=pnl_report.csv',
+            'Access-Control-Expose-Headers': 'Content-Disposition'
+        }
+    )
 
 # ----------------- Seed -----------------
 @api.post('/seed')
@@ -573,7 +718,7 @@ async def list_custom_orders(status_filter: Optional[str] = None, user=Depends(g
     return await cursor.to_list(500)
 
 @api.post('/custom-orders')
-async def create_custom_order(payload: CustomOrderIn, user=Depends(get_current_user)):
+async def create_custom_order(payload: CustomOrderIn, user=Depends(require_roles(['Owner', 'Manager', 'Sales']))):
     total = sum((i.price or 0) for i in payload.items)
     count = await db.custom_orders.count_documents({})
     doc = {
@@ -602,7 +747,7 @@ async def get_custom_order(cid: str, user=Depends(get_current_user)):
     return doc
 
 @api.put('/custom-orders/{cid}/status')
-async def update_custom_order_status(cid: str, payload: CustomOrderStatusIn, user=Depends(get_current_user)):
+async def update_custom_order_status(cid: str, payload: CustomOrderStatusIn, user=Depends(require_roles(['Owner', 'Manager', 'Sales']))):
     res = await db.custom_orders.find_one_and_update({'id': cid}, {'$set': {'status': payload.new_status}})
     if not res:
         raise HTTPException(404, 'Not found')
@@ -632,7 +777,7 @@ async def list_manufacturing(user=Depends(get_current_user)):
     return await cursor.to_list(500)
 
 @api.post('/manufacturing')
-async def create_manufacturing(payload: ManufacturingIn, user=Depends(get_current_user)):
+async def create_manufacturing(payload: ManufacturingIn, user=Depends(require_roles(['Owner', 'Manager', 'Warehouse']))):
     raw_cost = sum((r.cost or 0) for r in payload.raw_materials)
     total_cost = raw_cost + (payload.labor_cost or 0)
     per_unit = total_cost / payload.quantity if payload.quantity > 0 else 0
@@ -685,7 +830,7 @@ async def list_rolls(user=Depends(get_current_user)):
     return rolls
 
 @api.post('/rolls')
-async def create_roll(payload: FabricRollIn, user=Depends(get_current_user)):
+async def create_roll(payload: FabricRollIn, user=Depends(require_roles(['Owner', 'Manager', 'Warehouse']))):
     count = await db.fabric_rolls.count_documents({})
     doc = payload.dict()
     doc['id'] = str(uuid.uuid4())
@@ -699,7 +844,7 @@ async def create_roll(payload: FabricRollIn, user=Depends(get_current_user)):
     return clean(doc)
 
 @api.post('/rolls/{rid}/consume')
-async def consume_roll(rid: str, payload: RollUsageIn, user=Depends(get_current_user)):
+async def consume_roll(rid: str, payload: RollUsageIn, user=Depends(require_roles(['Owner', 'Manager', 'Warehouse']))):
     roll = await db.fabric_rolls.find_one({'id': rid})
     if not roll:
         raise HTTPException(404, 'Roll not found')
@@ -721,7 +866,7 @@ async def consume_roll(rid: str, payload: RollUsageIn, user=Depends(get_current_
     return doc
 
 @api.delete('/rolls/{rid}')
-async def delete_roll(rid: str, user=Depends(get_current_user)):
+async def delete_roll(rid: str, user=Depends(require_roles(['Owner', 'Manager']))):
     await db.fabric_rolls.delete_one({'id': rid})
     return {'ok': True}
 
@@ -759,7 +904,7 @@ async def list_deliveries(status_filter: Optional[str] = None, user=Depends(get_
     return await cursor.to_list(500)
 
 @api.post('/deliveries')
-async def create_delivery(payload: DeliveryIn, user=Depends(get_current_user)):
+async def create_delivery(payload: DeliveryIn, user=Depends(require_roles(['Owner', 'Manager', 'Warehouse']))):
     count = await db.deliveries.count_documents({})
     doc = payload.dict()
     doc['id'] = str(uuid.uuid4())

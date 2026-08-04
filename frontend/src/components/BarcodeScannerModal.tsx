@@ -20,24 +20,33 @@ export function BarcodeScannerModal({ visible, onClose, onScan }: Props) {
 
   if (!visible) return null;
 
+  if (Platform.OS === 'web') {
+    return (
+      <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+        <View style={styles.wrap}>
+          <View style={styles.web}>
+            <Ionicons name="qr-code" size={64} color={theme.color.muted} />
+            <Text style={styles.title}>Scanner works on mobile devices</Text>
+            <Text style={styles.subtitle}>Open in Expo Go or a deployed build to scan barcodes.</Text>
+          </View>
+          <Pressable style={styles.close} onPress={onClose} testID="close-scanner">
+            <Ionicons name="close" size={28} color="#FFF" />
+          </Pressable>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.wrap}>
         {permission?.granted ? (
           <>
-            {Platform.OS === 'web' ? (
-              <View style={styles.web}>
-                <Ionicons name="qr-code" size={64} color={theme.color.muted} />
-                <Text style={styles.title}>Scanner works on mobile devices</Text>
-                <Text style={styles.subtitle}>Open in Expo Go or a deployed build to scan barcodes.</Text>
-              </View>
-            ) : (
-              <CameraView
-                style={StyleSheet.absoluteFill}
-                onBarcodeScanned={scanned ? undefined : handleScanned}
-                barcodeScannerSettings={{ barcodeTypes: ['qr', 'ean13', 'ean8', 'code128', 'code39', 'upc_a', 'upc_e', 'itf14'] }}
-              />
-            )}
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              onBarcodeScanned={scanned ? undefined : handleScanned}
+              barcodeScannerSettings={{ barcodeTypes: ['qr', 'ean13', 'ean8', 'code128', 'code39', 'upc_a', 'upc_e', 'itf14'] }}
+            />
             <View style={styles.overlay} pointerEvents="none">
               <View style={styles.frame} />
               <Text style={styles.hint}>Align barcode within the frame</Text>

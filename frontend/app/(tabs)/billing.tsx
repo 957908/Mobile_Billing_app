@@ -50,7 +50,17 @@ export default function Billing() {
   const addProduct = (p: any) => {
     setItems((prev) => {
       const existing = prev.find((x) => x.product_id === p.id);
-      if (existing) return prev.map((x) => x.product_id === p.id ? { ...x, quantity: x.quantity + 1 } : x);
+      if (existing) {
+        if (existing.quantity + 1 > (p.stock || 0)) {
+          setToast(`Warning: Exceeds stock of ${p.stock} ${p.unit || 'pcs'}`);
+          setTimeout(() => setToast(null), 2500);
+        }
+        return prev.map((x) => x.product_id === p.id ? { ...x, quantity: x.quantity + 1 } : x);
+      }
+      if ((p.stock || 0) < 1) {
+        setToast(`Warning: No stock available for ${p.name}`);
+        setTimeout(() => setToast(null), 2500);
+      }
       return [...prev, { product_id: p.id, name: p.name, quantity: 1, price: p.selling_price, gst_rate: p.gst_rate, discount: 0 }];
     });
     setShowProduct(false);
@@ -72,6 +82,11 @@ export default function Billing() {
 
   const updateQty = (id: string, qty: number) => {
     if (qty <= 0) { setItems((p) => p.filter((x) => x.product_id !== id)); return; }
+    const p = products.find((x) => x.id === id);
+    if (p && qty > (p.stock || 0)) {
+      setToast(`Warning: Exceeds stock of ${p.stock} ${p.unit || 'pcs'}`);
+      setTimeout(() => setToast(null), 2500);
+    }
     setItems((p) => p.map((x) => x.product_id === id ? { ...x, quantity: qty } : x));
   };
 
