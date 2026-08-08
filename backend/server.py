@@ -11,7 +11,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
 from datetime import datetime, timedelta, timezone
-from passlib.context import CryptContext
+import bcrypt
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -24,7 +24,6 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'lotus-erp-dev-secret-change-me')
 JWT_ALG = 'HS256'
 TOKEN_MINUTES = 60 * 24 * 7  # 7 days
 
-pwd_ctx = CryptContext(schemes=['bcrypt'], deprecated='auto')
 oauth2 = OAuth2PasswordBearer(tokenUrl='/api/auth/login')
 
 app = FastAPI(title='LotusERP')
@@ -102,11 +101,16 @@ class ExpenseIn(BaseModel):
 
 # ----------------- Auth Helpers -----------------
 def hash_pw(p: str) -> str:
-    return pwd_ctx.hash(p)
+    password_bytes = p.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 def verify_pw(p: str, h: str) -> bool:
     try:
-        return pwd_ctx.verify(p, h)
+        password_bytes = p.encode('utf-8')
+        hashed_bytes = h.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
     except Exception:
         return False
 
