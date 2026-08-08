@@ -43,6 +43,14 @@ class LoginIn(BaseModel):
     email: EmailStr
     password: str
 
+class ForgotIdIn(BaseModel):
+    business_name: str
+
+class ResetPasswordIn(BaseModel):
+    email: EmailStr
+    business_name: str
+    new_password: str
+
 class Token(BaseModel):
     access_token: str
     token_type: str = 'bearer'
@@ -178,6 +186,26 @@ async def login(payload: LoginIn):
         raise HTTPException(status_code=401, detail='Invalid credentials')
     safe = {k: v for k, v in user.items() if k not in ('_id', 'password_hash')}
     return {'access_token': make_token(safe), 'token_type': 'bearer', 'user': safe}
+
+@api.post('/auth/forgot-id')
+async def forgot_id(payload: ForgotIdIn):
+    users = await db.users.find({'business_name': {'$regex': f'^{payload.business_name.strip()}$', '$options': 'i'}}, {'_id': 0, 'email': 1, 'name': 1}).to_list(10)
+    if not users:
+        raise HTTPException(status_code=404, detail='No users found with this business name')
+    return {'emails': [u['email'] for u in users]}
+
+@api.post('/auth/reset-password')
+async def reset_password(payload: ResetPasswordIn):
+    user = await db.users.find_one({'email': payload.email.lower()})
+    if not user:
+        raise HTTPException(status_code=404, detail='User email not found')
+    if user.get('business_name', '').strip().lower() != payload.business_name.strip().lower():
+        raise HTTPException(status_code=400, detail='Business name does not match record')
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail='Password must be at least 6 characters')
+    hashed = hash_pw(payload.new_password)
+    await db.users.update_one({'_id': user['_id']}, {'$set': {'password_hash': hashed}})
+    return {'message': 'Password reset successful'}
 
 @api.get('/auth/me')
 async def me(user=Depends(get_current_user)):

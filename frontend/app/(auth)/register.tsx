@@ -41,10 +41,10 @@ export default function Register() {
             <Text style={styles.title}>Create your account</Text>
             <Text style={styles.subtitle}>Start managing your décor business</Text>
 
-            <Field label="Your name" value={name} onChangeText={setName} placeholder="Rakesh Sharma" tid="reg-name-input" />
-            <Field label="Business name" value={business} onChangeText={setBusiness} placeholder="LotusERP Demo Store" tid="reg-business-input" />
-            <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@business.com" autoCapitalize="none" keyboardType="email-address" tid="reg-email-input" />
-            <Field label="Password" value={password} onChangeText={setPassword} placeholder="Min 6 characters" secureTextEntry tid="reg-password-input" />
+            <Field label="Your name" value={name} onChangeText={setName} placeholder="Rakesh Sharma" tid="register-name-input" />
+            <Field label="Business name" value={business} onChangeText={setBusiness} placeholder="LotusERP Demo Store" tid="register-business-input" />
+            <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@business.com" autoCapitalize="none" keyboardType="email-address" tid="register-email-input" />
+            <Field label="Password" value={password} onChangeText={setPassword} placeholder="Min 6 characters" secureTextEntry tid="register-password-input" />
 
             {error ? <Text style={styles.error} testID="reg-error">{error}</Text> : null}
 
