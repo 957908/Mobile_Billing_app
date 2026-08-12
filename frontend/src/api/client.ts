@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import NetInfo from '@react-native-community/netinfo';
 
-const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://home-sync-10.preview.emergentagent.com';
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://tender-breads-sing.loca.lt';
 const TOKEN_KEY = 'lotus_token';
 const QUEUE_KEY = 'lotus_sync_queue';
 const CACHE_PREFIX = 'lotus_cache_';
@@ -70,7 +70,10 @@ export async function replayQueue(): Promise<{ synced: number; remaining: number
 // ----------- Fetch with offline handling -----------
 async function rawFetch(method: string, path: string, body?: any, offlineFallback = true) {
   const token = await getToken();
-  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const headers = new Headers({ 
+    'Content-Type': 'application/json',
+    'bypass-tunnel-reminder': 'true'
+  });
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const url = `${BASE_URL}/api${path}`;
   const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
