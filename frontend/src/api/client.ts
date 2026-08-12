@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import NetInfo from '@react-native-community/netinfo';
 
-const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://home-sync-10.preview.emergentagent.com';
 const TOKEN_KEY = 'lotus_token';
 const QUEUE_KEY = 'lotus_sync_queue';
 const CACHE_PREFIX = 'lotus_cache_';
